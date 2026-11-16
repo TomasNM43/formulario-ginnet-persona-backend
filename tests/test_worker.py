@@ -2,20 +2,23 @@ import threading
 from datetime import datetime, timedelta
 
 import worker
-from app.models import persona_audio_table
+from app.models import persona_audio_det_table, persona_audio_table
 from sqlalchemy import insert, select, update
 
 T = persona_audio_table("main")
+D = persona_audio_det_table("main")
 
 
-def add(engine, tag, estado="pendiente", created=None, inicio=None, ref="", test=""):
+def add(engine, tag, estado="pendiente", created=None, inicio=None, rutas=()):
     with engine.begin() as c:
-        return c.execute(
+        id_ = c.execute(
             insert(T)
-            .values(TAG=tag, ESTADO=estado, FECHA_CREACION=created or datetime.now(), FECHA_INICIO=inicio,
-                    RUTA_REFERENCIA=ref, RUTA_PRUEBA=test)
+            .values(TAG=tag, ESTADO=estado, FECHA_CREACION=created or datetime.now(), FECHA_INICIO=inicio)
             .returning(T.c.ID_PERSONA_AUDIO)
         ).scalar_one()
+        for i, ruta in enumerate(rutas):
+            c.execute(insert(D).values(ID_PERSONA_AUDIO=id_, TAG=tag, ID_FRASE=f"F{i}", ORDEN=i, RUTA_AUDIO=ruta))
+        return id_
 
 
 def estado(engine, id_):
@@ -82,15 +85,17 @@ def test_concurrent_workers_claim_distinct_jobs(tmp_path):
 
 
 def test_run_one_success_and_error(engine, tmp_path):
-    r, p = tmp_path / "r.wav", tmp_path / "p.wav"
-    r.write_bytes(b"x")
-    p.write_bytes(b"x")
-    ok = add(engine, "ok", ref=str(r), test=str(p))
+    r, p, q = tmp_path / "r.wav", tmp_path / "p.wav", tmp_path / "q.wav"
+    for f in (r, p, q):
+        f.write_bytes(b"x")
+    ok = add(engine, "ok", rutas=[str(r), str(p), str(q)])
     assert worker.run_one(engine, "main") and estado(engine, ok).ESTADO == "listo"
-    bad = add(engine, "bad", ref=str(r), test=str(tmp_path / "falta.wav"))
+    bad = add(engine, "bad", rutas=[str(r), str(p), str(tmp_path / "falta.wav")])
     assert worker.run_one(engine, "main")
     row = estado(engine, bad)
     assert row.ESTADO == "error" and row.ERROR_MSG
+    sin = add(engine, "sin")
+    assert worker.run_one(engine, "main") and estado(engine, sin).ESTADO == "error"
     assert not worker.run_one(engine, "main")
 
 

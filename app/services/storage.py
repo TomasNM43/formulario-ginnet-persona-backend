@@ -67,29 +67,28 @@ def validate_audio_file(fileobj: BinaryIO, filename: str | None, allowed: frozen
 @dataclass(frozen=True)
 class AudioPaths:
     folder: Path
-    referencia: Path
-    prueba: Path
+    files: tuple[Path, ...]
 
 
-def build_paths(root: Path, tag: str, ext_ref: str, ext_test: str, now: datetime | None = None) -> AudioPaths:
-    """`{root}\\{yyyy}\\{mm}\\{tag}\\referencia.{ext}` y `prueba.{ext}`; valida 500 bytes UTF-8."""
+def build_paths(root: Path, tag: str, exts: list[str], now: datetime | None = None) -> AudioPaths:
+    """`{root}\\{yyyy}\\{mm}\\{tag}\\frase-{n}.{ext}` (n = posición 1..N); valida 500 bytes UTF-8."""
     now = now or datetime.now()
     folder = root / f"{now:%Y}" / f"{now:%m}" / tag
-    paths = AudioPaths(folder, folder / f"referencia.{ext_ref}", folder / f"prueba.{ext_test}")
-    for p in (paths.referencia, paths.prueba):
+    paths = AudioPaths(folder, tuple(folder / f"frase-{i}.{ext}" for i, ext in enumerate(exts, start=1)))
+    for p in paths.files:
         if len(str(p).encode("utf-8")) > MAX_PATH_BYTES:
             raise PathTooLongError("La ruta de almacenamiento resultante es demasiado larga")
     return paths
 
 
-def save_files(paths: AudioPaths, referencia: BinaryIO, prueba: BinaryIO) -> None:
+def save_files(paths: AudioPaths, sources: list[BinaryIO]) -> None:
     """Copia por bloques. Si falla, no deja residuos."""
     try:
         paths.folder.mkdir(parents=True, exist_ok=False)
     except FileExistsError as exc:
         raise FileCollisionError("tag en uso") from exc
     try:
-        for dest, src in ((paths.referencia, referencia), (paths.prueba, prueba)):
+        for dest, src in zip(paths.files, sources, strict=True):
             src.seek(0)
             with open(dest, "xb") as out:
                 shutil.copyfileobj(src, out, CHUNK_SIZE)

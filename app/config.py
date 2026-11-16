@@ -4,6 +4,7 @@ from __future__ import annotations
 import os
 import re
 import sys
+import tempfile
 from functools import lru_cache
 from pathlib import Path
 
@@ -31,6 +32,23 @@ class Settings(BaseSettings):
     LOG_DIR: Path
     STUCK_JOB_MINUTES: int = Field(15, ge=1)
 
+    # Verificación de frase hablada
+    TRANSCRIPTION_ENGINE: str = "faster-whisper"
+    WHISPER_MODEL: str = "small"
+    WHISPER_DEVICE: str = "cpu"
+    WHISPER_COMPUTE_TYPE: str = "int8"
+    PRELOAD_WHISPER: bool = True
+    PHRASE_THRESHOLD: float = Field(1.0, ge=0, le=1)
+    PHRASE_LANGUAGE: str = "es-ES"
+
+    # Autenticación JWT (solo la API; el worker no la necesita)
+    JWT_SECRET: SecretStr = SecretStr("")
+    JWT_ALGORITHM: str = "HS256"
+    JWT_EXPIRE_MINUTES: int = Field(60, ge=1)
+    MAX_FILE_SIZE_MB: int = Field(10, ge=1)
+    VOICE_ALLOWED_EXTENSIONS: str = "wav,mp3,flac,m4a,ogg,webm,mp4"
+    TEMP_DIR: Path = Path(tempfile.gettempdir()) / "ginnet_voice"
+
     @field_validator("DB_SCHEMA")
     @classmethod
     def _schema_is_identifier(cls, v: str) -> str:
@@ -53,6 +71,14 @@ class Settings(BaseSettings):
     @property
     def allowed_extensions(self) -> frozenset[str]:
         return frozenset(e.strip().lower().lstrip(".") for e in self.ALLOWED_EXTENSIONS.split(",") if e.strip())
+
+    @property
+    def voice_allowed_extensions(self) -> frozenset[str]:
+        return frozenset(e.strip().lower().lstrip(".") for e in self.VOICE_ALLOWED_EXTENSIONS.split(",") if e.strip())
+
+    @property
+    def voice_max_file_bytes(self) -> int:
+        return self.MAX_FILE_SIZE_MB * 1024 * 1024
 
     @property
     def cors_origins(self) -> list[str]:

@@ -13,7 +13,7 @@ from sqlalchemy import Engine, func, literal_column, select, update
 from app.config import get_settings
 from app.db import get_engine
 from app.logging_setup import setup_logging
-from app.models import Estado, persona_audio_table, sys_timestamp
+from app.models import Estado, persona_audio_det_table, persona_audio_table, sys_timestamp
 
 log = logging.getLogger("worker")
 
@@ -26,22 +26,31 @@ MAX_ERROR_BYTES = 1000
 class Job:
     id: int
     tag: str
-    ruta_referencia: str
-    ruta_prueba: str
 
 
 def truncate_bytes(msg: str, limit: int = MAX_ERROR_BYTES) -> str:
     return msg.encode("utf-8")[:limit].decode("utf-8", errors="ignore")
 
 
-def procesar(ruta_referencia: str, ruta_prueba: str) -> None:
+def procesar(rutas: list[str]) -> None:
     """PUNTO DE EXTENSIÓN: reemplazar por el análisis real. Debe lanzar excepción si falla."""
-    for ruta in (ruta_referencia, ruta_prueba):
+    if not rutas:
+        raise FileNotFoundError("El envío no tiene audios")
+    for ruta in rutas:
         if not ruta or not os.path.isfile(ruta):
             raise FileNotFoundError("Archivo de audio no encontrado")
         with open(ruta, "rb") as f:
             if not f.read(1):
                 raise ValueError("Archivo de audio vacío")
+
+
+def load_rutas(engine: Engine, schema: str, job_id: int) -> list[str]:
+    d = persona_audio_det_table(schema)
+    with engine.connect() as conn:
+        rows = conn.execute(
+            select(d.c.RUTA_AUDIO).where(d.c.ID_PERSONA_AUDIO == job_id).order_by(d.c.ID_DET)
+        ).all()
+    return [r.RUTA_AUDIO for r in rows]
 
 
 def _stuck_cutoff(minutes: int) -> Any:
@@ -65,7 +74,7 @@ def claim_next(engine: Engine, schema: str) -> Job | None:
     for _ in range(MAX_CLAIM_ATTEMPTS):
         with engine.connect() as conn:
             cand = conn.execute(
-                select(t.c.ID_PERSONA_AUDIO, t.c.TAG, t.c.RUTA_REFERENCIA, t.c.RUTA_PRUEBA)
+                select(t.c.ID_PERSONA_AUDIO, t.c.TAG)
                 .where(t.c.ESTADO == Estado.PENDIENTE.value)
                 .order_by(t.c.FECHA_CREACION, t.c.ID_PERSONA_AUDIO)
                 .limit(1)  # Oracle: FETCH FIRST 1 ROWS ONLY
@@ -82,7 +91,7 @@ def claim_next(engine: Engine, schema: str) -> Job | None:
                 conn.rollback()  # otro worker ganó; reintentar con el siguiente candidato
                 continue
             conn.commit()
-            return Job(cand.ID_PERSONA_AUDIO, cand.TAG, cand.RUTA_REFERENCIA or "", cand.RUTA_PRUEBA or "")
+            return Job(cand.ID_PERSONA_AUDIO, cand.TAG)
     return None
 
 
@@ -105,7 +114,7 @@ def run_one(engine: Engine, schema: str) -> bool:
         return False
     log.info("procesando", extra={"ctx": {"id": job.id, "tag": job.tag}})
     try:
-        procesar(job.ruta_referencia, job.ruta_prueba)
+        procesar(load_rutas(engine, schema, job.id))
     except Exception as exc:
         log.exception("fallo procesando", extra={"ctx": {"id": job.id}})
         error: str | None = f"{type(exc).__name__}: {exc}" or "Error desconocido"

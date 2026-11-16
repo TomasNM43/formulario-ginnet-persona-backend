@@ -41,11 +41,11 @@ def test_name_byte_validation():
 
 def test_path_length_in_bytes(tmp_path: Path):
     now = datetime(2026, 1, 5)
-    p = storage.build_paths(tmp_path, "ana-gil_abc123", "wav", "mp3", now)
-    assert p.referencia == tmp_path / "2026" / "01" / "ana-gil_abc123" / "referencia.wav"
-    assert p.prueba.name == "prueba.mp3"
+    p = storage.build_paths(tmp_path, "ana-gil_abc123", ["wav", "mp3"], now)
+    assert p.files[0] == tmp_path / "2026" / "01" / "ana-gil_abc123" / "frase-1.wav"
+    assert p.files[1].name == "frase-2.mp3"
     with pytest.raises(storage.PathTooLongError):
-        storage.build_paths(tmp_path / ("ñ" * 240), "t", "wav", "wav", now)  # 480 bytes solo en la raíz
+        storage.build_paths(tmp_path / ("ñ" * 240), "t", ["wav"], now)  # 480 bytes solo en la raíz
 
 
 @pytest.mark.parametrize("data,name", [(WAV, "a.wav"), (MP3, "a.MP3"), (FLAC, "a.flac")])
